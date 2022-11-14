@@ -1,48 +1,23 @@
-use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    net::TcpListener,
-    sync::broadcast,
-};
+#!(allow_deadcode);
+
+use tokio::sync::mpsc::channel;
+mod message;
+mod wait;
+mod file_sink;
+
+pub use message::{message_generator::message_generator, Message};
+pub use file_sink::file_sink;
+pub use wait::wait;
+
+
 
 #[tokio::main]
 async fn main() {
-    let listener = TcpListener::bind("localhost:8080").await.unwrap();
+    let (tx, rx) = channel::<Message>(10);
 
-    let (tx, _rx) = broadcast::channel(10);
+    // message_generation -> file_sink
+    tokio::spawn(message_generator(tx));
+    tokio::spawn(file_sink(rx));
 
-    loop {
-        let (mut socket, addr) = listener.accept().await.unwrap();
-
-        let tx = tx.clone();
-        let mut rx = tx.subscribe();
-
-        tokio::spawn(async move {
-            let (reader, mut writer) = socket.split();
-
-            let mut reader = BufReader::new(reader);
-
-            let mut line = String::new();
-
-            loop {
-                tokio::select! {
-                    result = reader.read_line(&mut line) => {
-                        if result.unwrap() == 0 {
-                            break;
-                        }
-                        tx.send((line.clone(), addr)).unwrap();
-                        line.clear();
-                    }
-
-                    result = rx.recv() => {
-                        let (msg, other_addr) = result.unwrap();
-
-                        if addr != other_addr {
-                            writer.write_all(msg.as_bytes()).await.unwrap();
-                        }
-
-                    }
-                }
-            }
-        });
-    }
+    wait(2000).await;
 }
